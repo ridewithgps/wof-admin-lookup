@@ -16,7 +16,7 @@ const _ = require('lodash');
 function LocalPipService(datapath, layers, localizedAdminNames) {
   const self = this;
 
-  createPipService(datapath, _.defaultTo(layers, []), localizedAdminNames, (err, service) => {
+  createPipService(datapath, _.defaultTo(layers, []), _.defaultTo(localizedAdminNames, false), (err, service) => {
     if (err) {
       throw err;
     }

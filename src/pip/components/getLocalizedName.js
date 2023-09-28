@@ -2,7 +2,7 @@
 
 const _ = require('lodash');
 const logger = require('pelias-logger').get('wof-pip-service');
-
+const ccToLc = require('./countryCodeToLangCodes.json');
 /**
  * Return the localized name or default name for the given record
  *
@@ -21,6 +21,7 @@ function getName(wofData) {
   return getLocalizedName(wofData, 'wof:lang_x_spoken') ||
          getLocalizedName(wofData, 'wof:lang_x_official') ||
          getLocalizedName(wofData, 'wof:lang') ||
+         getLocalizedNameByCountryCode(wofData) || // fallback to country code to lang code mapping
          getPropertyValue(wofData, 'wof:label') ||
          getPropertyValue(wofData, 'wof:name');
 }
@@ -45,11 +46,10 @@ function isUsCounty(wofData) {
  *  then return 'name:rus_x_preferred'
  *
  * @param {object} wofData
- * @param {string} langProperty
+ * @param {Array} languages
  * @returns {string}
  */
-function getOfficialLangName(wofData, langProperty) {
-  var languages = wofData.properties[langProperty];
+function getOfficialLangName(wofData, languages) {
 
   // convert to array in case it is just a string
   if (!(languages instanceof Array)) {
@@ -57,7 +57,7 @@ function getOfficialLangName(wofData, langProperty) {
   }
 
   if (languages.length > 1) {
-    logger.silly(`more than one ${langProperty} specified`,
+    logger.silly(`more than one language specified`, languages,
       wofData.properties['wof:lang_x_official'], languages);
   }
 
@@ -85,7 +85,7 @@ function getLocalizedName(wofData, langProperty) {
     !_.isEqual(wofData.properties[langProperty], ['und'])) {
 
     // build the preferred lang key to use for name, like 'name:deu_x_preferred'
-    var official_lang_key = getOfficialLangName(wofData, langProperty);
+    var official_lang_key = getOfficialLangName(wofData, wofData.properties[langProperty]);
 
     // check if that language is available
     var name = getPropertyValue(wofData, official_lang_key);
@@ -99,6 +99,51 @@ function getLocalizedName(wofData, langProperty) {
   }
   return false;
 }
+
+/**
+ * Given a language property name return the corresponding name:* property if one exists
+ * and false if that can't be found for any reason
+ *
+ * @param {object} wofData
+ * @returns {false|string}
+ */
+function getLocalizedNameByCountryCode(wofData) {
+  // check that there is a value at the specified property and that it's not
+  // set to unknown or undefined
+
+  logger.warn('Looking up lang by country code', wofData.properties['wof:name'],
+  wofData.properties['wof:placetype'], wofData.properties['wof:id']);
+  const countryProperty = 'wof:country';
+  if (wofData.properties.hasOwnProperty(countryProperty) &&
+    !_.isEmpty(wofData.properties[countryProperty]) &&
+    wofData.properties[countryProperty] !== 'unk' &&
+    wofData.properties[countryProperty] !== 'und' &&
+    !_.isEqual(wofData.properties[countryProperty], ['unk']) &&
+    !_.isEqual(wofData.properties[countryProperty], ['und'])) {
+      let countryCode = wofData.properties[countryProperty];
+      if (!ccToLc.hasOwnProperty(countryCode)){
+        logger.warn(countryCode, '[missing] in CC2LCMap', wofData.properties['wof:name'],
+        wofData.properties['wof:placetype'], wofData.properties['wof:id']);
+        return false;
+      }
+      let officialLangs = ccToLc[countryCode];
+      // build the preferred lang key to use for name, like 'name:deu_x_preferred'
+      var official_lang_key = getOfficialLangName(wofData, officialLangs);
+
+      // check if that language is available
+      var name = getPropertyValue(wofData, official_lang_key);
+      if (name) {
+        return name;
+      }
+
+      // if corresponding name property wasn't found, log the error
+      logger.warn(officialLangs, '[missing]', official_lang_key, wofData.properties['wof:name'],
+        wofData.properties['wof:placetype'], wofData.properties['wof:id']);
+  }
+  return false;
+}
+
+
 
 /**
  * Get the string value of the property or false if not found
