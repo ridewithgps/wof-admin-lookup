@@ -33,44 +33,46 @@ process.on('SIGTERM', () => {
   process.exit(0);
 });
 
-const serializedAdminLookupPath = path.join(datapath, 'serialized', `${layer}.v8`);
-
+const serializedAdminLookupPath = path.join(datapath, 'serialized', `${layer}.v8`); // path to serialized file
 if (fs.existsSync(serializedAdminLookupPath)) {
   logger.info(`Found serialized data at ${serializedAdminLookupPath}. Attempting to deserialize...`);
-  const adminDataSer = fs.readFileSync(serializedAdminLookupPath);
-  const adminData = v8.deserialize(adminDataSer);
+  try {
+    const adminDataSer = fs.readFileSync(serializedAdminLookupPath);
+    const adminData = v8.deserialize(adminDataSer); // will throw an error of serialization format differs from nodejs version
+    const data = adminData.data;
+    
+    // Create the adminLookup using our deserialized data
+    const adminLookupTemp = adminData.adminLookup;
+    adminLookup = new PolygonLookup( { features: [] } );
+    const rtree = new RBush();
+    rtree._maxEntries = adminLookupTemp.rtree._maxEntries;
+    rtree._minEntries = adminLookupTemp.rtree._minEntries;
+    rtree.data = adminLookupTemp.rtree.data;
+    adminLookup.rtree = rtree;
+    adminLookup.polygons = adminLookupTemp.polygons;
 
-  // let adminLookupSer = fs.readFileSync(serializedAdminLookupPath);
-  const adminLookupTemp = adminData.adminLookup;
-  const data = adminData.data;
+    process.on('message', msg => {
+      switch (msg.type) {
+        case 'search' : return handleSearch(msg);
+        default       : logger.error('Unknown message:', msg);
+      }
+    });
+    
+    // alert the master thread that this worker has been loaded and is ready for requests
+    process.send( {
+      type: 'loaded',
+      layer: layer,
+      data: data,
+      seconds: ((Date.now() - startTime)/1000)
+    });
 
-  // Create the adminLookup using our deserialized data
-  adminLookup = new PolygonLookup( { features: [] } );
-  const rtree = new RBush();
-  rtree._maxEntries = adminLookupTemp.rtree._maxEntries;
-  rtree._minEntries = adminLookupTemp.rtree._minEntries;
-  rtree.data = adminLookupTemp.rtree.data;
-  adminLookup.rtree = rtree;
-  adminLookup.polygons = adminLookupTemp.polygons;
-
-  process.on('message', msg => {
-    switch (msg.type) {
-      case 'search' : return handleSearch(msg);
-      default       : logger.error('Unknown message:', msg);
-    }
-  });
-
-  // alert the master thread that this worker has been loaded and is ready for requests
-  process.send( {
-    type: 'loaded',
-    layer: layer,
-    data: data,
-    seconds: ((Date.now() - startTime)/1000)
-  });
-
+  } catch (error) {
+    logger.warn('Error reading serialization file! Will need to index files from sqlite database.', error);
+  }
 }
-else
+if (adminLookup === undefined)
 {
+  // could not find/finish deserialization. Will read from sqlite database.
   readStream(datapath, layer, localizedAdminNames, (features) => {
     // find all the properties of all features and write them to a file
     // at the same time, limit the feature.properties to just Id and Hierarchy since it's all that's needed in the worker
@@ -89,13 +91,10 @@ else
       try {
         fs.mkdirSync(path.dirname(serializedAdminLookupPath));
       } catch (error) {
-        if (error.code === 'EEXIST')
+        if (error.code !== 'EEXIST')
         {
           // multiprocessor application. existsSync may be stale.
-          logger.warn(`${path.dirname(serializedAdminLookupPath)} already exists, skip creation`);
-        }
-        else{
-          logger.error(`Error creating ${path.dirname(serializedAdminLookupPath)}, skipping serialization... `);
+          logger.warn(`Error creating ${path.dirname(serializedAdminLookupPath)}, skipping serialization... `);
           doSerialization = false;
         }
       }
