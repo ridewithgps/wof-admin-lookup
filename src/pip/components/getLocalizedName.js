@@ -3,6 +3,15 @@
 const _ = require('lodash');
 const logger = require('pelias-logger').get('wof-pip-service');
 const ccToLc = require('./countryCodeToLangCodes.json');
+const fs = require('fs');
+// cc, id, true/false
+try {
+  fs.mkdirSync('./temp');
+}
+catch (error) {
+  console.info('Failed to create temp directory!');
+}
+fs.writeFileSync('./temp/' + process.argv[2]+'.csv', '', {encoding: 'utf-8', flag: 'w'});
 /**
  * Return the localized name or default name for the given record
  *
@@ -16,6 +25,16 @@ function getName(wofData) {
   if (isUsCounty(wofData)) {
     return getPropertyValue(wofData, 'qs:a2_alt');
   }
+
+  const result = getLocalizedName(wofData, 'wof:lang_x_spoken') ||
+         getLocalizedName(wofData, 'wof:lang_x_official') ||
+         getLocalizedName(wofData, 'wof:lang') ||
+         getLocalizedNameByCountryCode(wofData);
+  const missing = result === false;
+  const country = wofData.properties['wof:country'] ? wofData.properties['wof:country'] : '??';
+  fs.writeFileSync('./temp/' + process.argv[2]+'.csv', 
+                  `${country},${wofData.properties['wof:id']},${missing}\n`,
+                   {encoding: 'utf-8', flag: 'a'});
 
   // attempt to use the following in order of priority and fallback to wof:name if all else fails
   return getLocalizedName(wofData, 'wof:lang_x_spoken') ||
